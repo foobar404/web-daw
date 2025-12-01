@@ -1,8 +1,5 @@
 :root {
     --color-primary: #937cdd;
-    --panel-sounds-width: 256px;
-    --panel-tracks-height: 1fr;
-    --panel-pianoroll-height: 200px;
 }
 
 body {

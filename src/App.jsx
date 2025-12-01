@@ -3,6 +3,7 @@ import { TrackNav } from './components/TrackNav';
 import { Tracks } from "./components/Tracks";
 import { Sounds } from './components/Sounds';
 import { PianoRoll } from './components/PianoRoll';
+import { TapPad } from './components/TapPad';
 import * as lamejs from 'lamejs';
 
 // Pixels per second for the simple timeline rendering
@@ -25,14 +26,68 @@ function App() {
   const recordedChunksRef = useRef([])
   const rafRef = useRef(0)
   const nextIds = useRef({ track: 2, clip: 1, sound: 1 })
+  const playbackStartOffsetRef = useRef(0)
+  const playbackTimerRef = useRef(null)
   const [sounds, setSounds] = useState([])
   const [recordingTrackId, setRecordingTrackId] = useState(null)
   const [selectedTrackId, setSelectedTrackId] = useState(1)
   const [snapEnabled, setSnapEnabled] = useState(true)
-  const draggingRef = useRef(null)
   const [loop, setLoop] = useState(false)
-  const playbackTimerRef = useRef(null)
-  const playbackStartOffsetRef = useRef(0) // Track where playback started from
+
+  // Panel visibility state
+  const [panelVisibility, setPanelVisibility] = useState({
+    sounds: true,
+    tapPad: true,
+    tracks: true,
+    pianoRoll: true
+  })
+
+  // Refs for panels
+  const soundsRef = useRef(null)
+  const tapPadRef = useRef(null)
+  const tracksRef = useRef(null)
+
+  // ResizeObserver for snapping to grid
+  useEffect(() => {
+    const container = document.querySelector('.w-screen.h-screen')
+    if (!container) return
+
+    const updateSpan = (panelName, ref) => {
+      if (!ref.current) return
+      const panelWidth = ref.current.offsetWidth
+      const containerWidth = container.offsetWidth
+      const columnWidth = containerWidth / 12
+      const newSpan = Math.max(1, Math.min(12, Math.round(panelWidth / columnWidth)))
+      setPanelSpans(prev => ({ ...prev, [panelName]: newSpan }))
+    }
+
+    const observers = {}
+
+    if (panelVisibility.sounds && soundsRef.current) {
+      observers.sounds = new ResizeObserver(() => updateSpan('sounds', soundsRef))
+      observers.sounds.observe(soundsRef.current)
+    }
+    if (panelVisibility.tapPad && tapPadRef.current) {
+      observers.tapPad = new ResizeObserver(() => updateSpan('tapPad', tapPadRef))
+      observers.tapPad.observe(tapPadRef.current)
+    }
+    if ((panelVisibility.tracks || panelVisibility.pianoRoll) && tracksRef.current) {
+      observers.tracks = new ResizeObserver(() => updateSpan('tracks', tracksRef))
+      observers.tracks.observe(tracksRef.current)
+    }
+
+    return () => {
+      Object.values(observers).forEach(obs => obs.disconnect())
+    }
+  }, [panelVisibility])
+
+  // Toggle panel visibility
+  const togglePanel = (panelName) => {
+    setPanelVisibility(prev => ({
+      ...prev,
+      [panelName]: !prev[panelName]
+    }))
+  }
 
   // Update playHead while playing
   useEffect(() => {
@@ -53,6 +108,10 @@ function App() {
   // Spacebar to toggle play/pause
   useEffect(() => {
     const handleKeyPress = (e) => {
+      // Don't capture spacebar if typing in an input field
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        return
+      }
       if (e.code === 'Space') {
         e.preventDefault()
         togglePlayPause()
@@ -114,18 +173,25 @@ function App() {
   }
 
   // add a clip to a track; default start is 0 so clips overlap across tracks by default
-  function addClipToTrack(trackId, buffer, name, start = 0) {
+  function addClipToTrack(trackId, buffer, name, start = 0, extraData = {}) {
     setTracks((prev) => prev.map((t) => {
       if (t.id !== trackId) return t
-      // Use the full buffer duration for timeline clips
-      const clip = { id: nextIds.current.clip++, name, buffer, duration: buffer.duration, start }
+      // Use the full buffer duration for timeline clips, or provided duration for piano roll
+      const duration = extraData.duration || (buffer ? buffer.duration : 0)
+      const clip = { 
+        id: nextIds.current.clip++, 
+        name, 
+        buffer, 
+        duration, 
+        start,
+        ...extraData // Include any extra data like notes, type, soundId
+      }
       return { ...t, clips: [...t.clips, clip] }
     }))
   }
 
   async function startRecording(trackId) {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      console.warn('getUserMedia not supported in this browser')
       return
     }
     try {
@@ -158,7 +224,7 @@ function App() {
           const s = { id: nextIds.current.sound++, name: recordingName, buffer: buf, duration: buf.duration }
           setSounds((p) => [...p, s])
         } catch (err) {
-          console.error('Failed to decode recording', err)
+          // Failed to decode recording
         }
         stopMediaStream()
         mediaRecorderRef.current = null
@@ -168,7 +234,7 @@ function App() {
       mr.start()
       setRecordingTrackId(trackId)
     } catch (err) {
-      console.error('Could not start recording', err)
+      // Could not start recording
     }
   }
 
@@ -214,11 +280,16 @@ function App() {
   }
 
   function onCreatePianoRollClip(trackId, clip) {
-    addClipToTrack(trackId, clip.buffer, clip.name, clip.start)
-
-    // Also add to sounds library
-    const s = { id: nextIds.current.sound++, name: clip.name, buffer: clip.buffer, duration: clip.duration || clip.buffer.duration }
-    setSounds((p) => [...p, s])
+    if (clip.type === 'pianoRoll') {
+      // For piano roll clips, store the notes data
+      addClipToTrack(trackId, null, clip.name, clip.start, clip)
+    } else {
+      // For regular clips, store the buffer
+      addClipToTrack(trackId, clip.buffer, clip.name, clip.start)
+      // Also add to sounds library
+      const s = { id: nextIds.current.sound++, name: clip.name, buffer: clip.buffer, duration: clip.duration || clip.buffer.duration }
+      setSounds((p) => [...p, s])
+    }
   }
 
   function updateClip(trackId, clipId, patch) {
@@ -226,6 +297,15 @@ function App() {
       if (t.id !== trackId) return t
       return { ...t, clips: t.clips.map((c) => (c.id === clipId ? { ...c, ...patch } : c)) }
     }))
+  }
+
+  function updatePianoRollSound(soundId) {
+    setTracks((prev) => prev.map((t) => ({
+      ...t,
+      clips: t.clips.map((c) => 
+        c.type === 'pianoRoll' ? { ...c, soundId } : c
+      )
+    })))
   }
 
   function updateTrackVolume(trackId, volume) {
@@ -450,17 +530,42 @@ function App() {
       gainNode.connect(ctx.destination)
 
       for (const c of t.clips) {
-        if (!c.buffer) continue
-        const clipEnd = c.start + c.duration
-        if (clipEnd <= startFrom) continue // already passed
-        const offset = Math.max(0, startFrom - c.start)
-        const when = startAt + Math.max(0, c.start - startFrom)
-        const src = ctx.createBufferSource()
-        src.buffer = c.buffer
-        src.connect(gainNode) // Connect through gain node instead of directly to destination
-        try { src.start(when, offset) } catch (e) { src.start(when) }
-        sources.push(src)
-        lastEnd = Math.max(lastEnd, clipEnd)
+        if (c.type === 'pianoRoll') {
+          // Handle piano roll clips by scheduling individual notes
+          if (c.notes && c.soundId) {
+            const sound = sounds.find(s => String(s.id) === String(c.soundId))
+            if (sound && sound.buffer) {
+              for (const note of c.notes) {
+                const noteStart = c.start + note.start
+                const noteEnd = noteStart + note.duration
+                if (noteEnd <= startFrom) continue // already passed
+                
+                const when = startAt + Math.max(0, noteStart - startFrom)
+                if (when >= startAt) { // Only schedule future notes
+                  const src = ctx.createBufferSource()
+                  src.buffer = sound.buffer
+                  src.playbackRate.value = Math.pow(2, (note.transposition || 0) / 12)
+                  src.connect(gainNode)
+                  try { src.start(when) } catch (e) { src.start(when) }
+                  sources.push(src)
+                }
+                lastEnd = Math.max(lastEnd, noteEnd)
+              }
+            }
+          }
+        } else if (c.buffer) {
+          // Handle regular clips
+          const clipEnd = c.start + c.duration
+          if (clipEnd <= startFrom) continue // already passed
+          const offset = Math.max(0, startFrom - c.start)
+          const when = startAt + Math.max(0, c.start - startFrom)
+          const src = ctx.createBufferSource()
+          src.buffer = c.buffer
+          src.connect(gainNode) // Connect through gain node instead of directly to destination
+          try { src.start(when, offset) } catch (e) { src.start(when) }
+          sources.push(src)
+          lastEnd = Math.max(lastEnd, clipEnd)
+        }
       }
     }
     activeSourcesRef.current = sources
@@ -541,7 +646,6 @@ function App() {
       a.remove()
       URL.revokeObjectURL(url)
     } catch (error) {
-      console.error('Export failed:', error)
       alert('Export failed. Please try again.')
     }
   }
@@ -594,8 +698,15 @@ function App() {
     return new Blob([arrayBuffer], { type: 'audio/wav' })
   }
 
+  // Calculate grid columns based on panel visibility
+  const getGridColumns = () => {
+    const visibleCount = Object.values(panelVisibility).filter(Boolean).length
+    if (visibleCount === 0) return '1fr'
+    return `repeat(${visibleCount}, 1fr)`
+  }
+
   return (
-    <div className="w-screen h-screen mx-auto p-4 overflow-hidden grid grid-cols-[256px_1fr] grid-rows-[auto_1fr] gap-4">
+    <>
       <TrackNav
         togglePlayPause={togglePlayPause}
         stopPlayback={stopPlayback}
@@ -604,57 +715,84 @@ function App() {
         tracks={tracks}
         playHead={playHead}
         secondsToMmSs={secondsToMmSs}
-        className="col-span-2"
+        panelVisibility={panelVisibility}
+        onTogglePanel={togglePanel}
+        style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 10 }}
       />
-
-      <Sounds
-        sounds={sounds}
-        onAddFiles={addSounds}
-        onReorderSounds={reorderSounds}
-        className="row-start-2"
-      />
-
-      <div className="row-start-2 grid grid-rows-[1fr_auto] gap-4 min-h-0">
-        <Tracks
-          projectDuration={projectDuration}
-          PPS={PPS}
-          playHead={playHead}
-          setPlayHead={setPlayHead}
-          isPlaying={isPlaying}
-          tracks={tracks}
-          selectedTrackId={selectedTrackId}
-          setSelectedTrackId={setSelectedTrackId}
-          snapEnabled={snapEnabled}
-          setSnapEnabled={setSnapEnabled}
-          onClipPointerDown={onClipPointerDown}
-          secondsToMmSs={secondsToMmSs}
-          updateClip={updateClip}
-          updateTrackVolume={updateTrackVolume}
-          toggleTrackMute={toggleTrackMute}
-          deleteClip={deleteClip}
-          deleteTrack={deleteTrack}
-          duplicateTrack={duplicateTrack}
-          moveTrackUp={moveTrackUp}
-          moveTrackDown={moveTrackDown}
-          handleFilesAdd={handleFilesAdd}
-          recordingTrackId={recordingTrackId}
-          stopRecording={stopRecording}
-          startRecording={startRecording}
-          addTrack={addTrack}
+      <div className="w-screen h-screen overflow-hidden grid gap-4" 
+           style={{
+             gridTemplateColumns: getGridColumns(),
+             gridTemplateRows: '1fr',
+             paddingTop: '5rem'
+           }}>      {panelVisibility.sounds && (
+        <Sounds
           sounds={sounds}
-          onDropSound={onDropSound}
-          moveClipToTrack={moveClipToTrack}
-          addClipToTrack={addClipToTrack}
+          onAddFiles={addSounds}
+          onReorderSounds={reorderSounds}
         />
+      )}
 
-        <PianoRoll
+      {panelVisibility.tapPad && (
+        <TapPad
           sounds={sounds}
-          onCreateClip={onCreatePianoRollClip}
-          selectedTrackId={selectedTrackId}
-          PPS={PPS}
         />
+      )}
+
+      {(panelVisibility.tracks || panelVisibility.pianoRoll) && (
+        <div className="grid gap-4 min-h-0"
+            style={{
+              gridTemplateRows: panelVisibility.tracks && panelVisibility.pianoRoll
+                ? '1fr 1fr'
+                : '1fr'
+            }}>
+          {panelVisibility.tracks && (
+            <Tracks
+              projectDuration={projectDuration}
+              PPS={PPS}
+              playHead={playHead}
+              setPlayHead={setPlayHead}
+              isPlaying={isPlaying}
+              tracks={tracks}
+              selectedTrackId={selectedTrackId}
+              setSelectedTrackId={setSelectedTrackId}
+              snapEnabled={snapEnabled}
+              setSnapEnabled={setSnapEnabled}
+              onClipPointerDown={onClipPointerDown}
+              secondsToMmSs={secondsToMmSs}
+              updateClip={updateClip}
+              updateTrackVolume={updateTrackVolume}
+              toggleTrackMute={toggleTrackMute}
+              deleteClip={deleteClip}
+              deleteTrack={deleteTrack}
+              duplicateTrack={duplicateTrack}
+              moveTrackUp={moveTrackUp}
+              moveTrackDown={moveTrackDown}
+              handleFilesAdd={handleFilesAdd}
+              recordingTrackId={recordingTrackId}
+              stopRecording={stopRecording}
+              startRecording={startRecording}
+              addTrack={addTrack}
+              sounds={sounds}
+              onDropSound={onDropSound}
+              moveClipToTrack={moveClipToTrack}
+              addClipToTrack={addClipToTrack}
+            />
+          )}
+
+          {panelVisibility.pianoRoll && (
+            <PianoRoll
+              sounds={sounds}
+              onCreateClip={onCreatePianoRollClip}
+              onUpdateClip={updateClip}
+              onUpdatePianoRollSound={updatePianoRollSound}
+              selectedTrackId={selectedTrackId}
+              PPS={PPS}
+            />
+          )}
+        </div>
+      )}
       </div>
-    </div>
+    </>
   )
 }
 

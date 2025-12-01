@@ -1,53 +1,4 @@
 import React, { useRef, useEffect, useState } from 'react';
-import WaveSurfer from 'wavesurfer.js';
-
-// Convert AudioBuffer to WAV blob
-function audioBufferToWav(buffer) {
-    const length = buffer.length;
-    const numberOfChannels = buffer.numberOfChannels;
-    const sampleRate = buffer.sampleRate;
-    const bytesPerSample = 2; // 16-bit
-    const blockAlign = numberOfChannels * bytesPerSample;
-    const byteRate = sampleRate * blockAlign;
-    const dataSize = length * blockAlign;
-    const bufferSize = 44 + dataSize;
-
-    const arrayBuffer = new ArrayBuffer(bufferSize);
-    const view = new DataView(arrayBuffer);
-
-    // WAV header
-    const writeString = (offset, string) => {
-        for (let i = 0; i < string.length; i++) {
-            view.setUint8(offset + i, string.charCodeAt(i));
-        }
-    };
-
-    writeString(0, 'RIFF');
-    view.setUint32(4, bufferSize - 8, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true); // PCM
-    view.setUint16(22, numberOfChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, byteRate, true);
-    view.setUint16(32, blockAlign, true);
-    view.setUint16(34, 16, true); // bits per sample
-    writeString(36, 'data');
-    view.setUint32(40, dataSize, true);
-
-    // Convert float samples to 16-bit PCM
-    let offset = 44;
-    for (let i = 0; i < length; i++) {
-        for (let channel = 0; channel < numberOfChannels; channel++) {
-            const sample = Math.max(-1, Math.min(1, buffer.getChannelData(channel)[i]));
-            view.setInt16(offset, sample * 0x7FFF, true);
-            offset += 2;
-        }
-    }
-
-    return new Blob([arrayBuffer], { type: 'audio/wav' });
-}
 
 export function Tracks(props) {
     const {
@@ -84,7 +35,6 @@ export function Tracks(props) {
     } = props
 
     const scrollRef = useRef(null)
-    const [waveSurfers, setWaveSurfers] = useState(new Map())
     const [isDraggingTimeline, setIsDraggingTimeline] = useState(false)
 
     // Cache peaks per AudioBuffer to avoid recomputing for each clip
@@ -247,47 +197,7 @@ export function Tracks(props) {
         }
     }, [isDraggingTimeline, projectDuration, PPS, setPlayHead])
 
-    // Create or update wavesurfer for a clip
-    const createWaveSurfer = (clipId, containerRef, buffer) => {
-        if (!containerRef.current || !buffer) return
-
-        // Destroy existing wavesurfer if it exists
-        const existingWs = waveSurfers.get(clipId)
-        if (existingWs && !existingWs.isDestroyed) {
-            existingWs.destroy()
-        }
-
-        try {
-            const wavesurfer = WaveSurfer.create({
-                container: containerRef.current,
-                waveColor: 'rgba(255, 255, 255, 0.8)',
-                progressColor: 'rgba(255, 255, 255, 0.9)',
-                height: 40,
-                barWidth: 2,
-                barRadius: 1,
-                responsive: true,
-                normalize: true,
-                backend: 'WebAudio'
-            })
-
-            // Convert AudioBuffer to WAV blob and load it
-            const wavBlob = audioBufferToWav(buffer)
-            wavesurfer.loadBlob(wavBlob)
-
-            // Disable interaction (we handle dragging ourselves)
-            wavesurfer.on('ready', () => {
-                wavesurfer.setDisabledEventEmitter(true)
-            })
-
-            setWaveSurfers(prev => new Map(prev.set(clipId, wavesurfer)))
-        } catch (error) {
-            console.warn('Failed to create wavesurfer for clip:', clipId, error)
-        }
-    }
-
-    // Old per-clip Wavesurfer approach is expensive. Instead, compute peaks once
-    // per AudioBuffer and draw fast canvas waveforms for each clip. This is
-    // much cheaper than creating a wavesurfer instance per clip.
+    // Draw canvas waveforms for clips
     useEffect(() => {
         // Iterate clips and draw canvases
         tracks.forEach(track => {

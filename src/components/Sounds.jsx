@@ -2,13 +2,40 @@ import React, { useState, useRef, useEffect } from 'react'
 
 export function Sounds(props) {
     const { sounds = [], onAddFiles, onReorderSounds, className } = props
-    const [soundCanvases, setSoundCanvases] = useState(new Map())
     const [draggedIndex, setDraggedIndex] = useState(null)
     const [dragOverIndex, setDragOverIndex] = useState(null)
     const [gridColumns, setGridColumns] = useState(1)
+    const [searchTerm, setSearchTerm] = useState('')
 
     // Cache peaks per AudioBuffer to avoid recomputing for each sound
     const peaksCache = useRef(new WeakMap())
+    const audioCtxRef = useRef(null)
+
+    // Initialize audio context
+    const ensureAudioContext = () => {
+        if (!audioCtxRef.current) {
+            const AC = window.AudioContext || window.webkitAudioContext
+            audioCtxRef.current = new AC({ latencyHint: 'interactive' })
+        }
+        return audioCtxRef.current
+    }
+
+    // Play a sound
+    const playSound = async (sound) => {
+        if (!sound || !sound.buffer) return
+
+        const ctx = ensureAudioContext()
+        ctx.resume()
+
+        try {
+            const source = ctx.createBufferSource()
+            source.buffer = sound.buffer
+            source.connect(ctx.destination)
+            source.start(0)
+        } catch (error) {
+            // Failed to play sound
+        }
+    }
 
     // Compute a fixed-size peaks array for an AudioBuffer (runs once per buffer)
     const computePeaks = (buffer, peakCount = 128) => {
@@ -44,7 +71,6 @@ export function Sounds(props) {
             peaksCache.current.set(buffer, peaks)
             return peaks
         } catch (err) {
-            console.warn('computePeaks failed', err)
             return null
         }
     }
@@ -76,14 +102,12 @@ export function Sounds(props) {
         gradient.addColorStop(1, 'rgba(59, 130, 246, 0.95)')    // Bottom - bright blue
 
         ctx.fillStyle = gradient
-        ctx.strokeStyle = 'rgba(59, 130, 246, 0.3)'
         ctx.lineWidth = Math.max(0.5, dpr * 0.5)
         ctx.lineCap = 'round'
 
         const centerY = h / 2
         const step = peaks.length / width
         const barWidth = Math.max(1, dpr * 1.2)
-        const barSpacing = dpr * 0.2
 
         // Draw symmetric waveform bars
         for (let x = 0; x < width; x++) {
@@ -96,20 +120,10 @@ export function Sounds(props) {
 
             // Draw upper bar (positive)
             ctx.fillRect(xPos - barWidth/2, centerY - barHeight, barWidth, barHeight)
-            ctx.strokeRect(xPos - barWidth/2, centerY - barHeight, barWidth, barHeight)
 
             // Draw lower bar (negative) - symmetric
             ctx.fillRect(xPos - barWidth/2, centerY, barWidth, barHeight)
-            ctx.strokeRect(xPos - barWidth/2, centerY, barWidth, barHeight)
         }
-
-        // Add subtle center line
-        ctx.strokeStyle = 'rgba(59, 130, 246, 0.2)'
-        ctx.lineWidth = Math.max(0.5, dpr * 0.3)
-        ctx.beginPath()
-        ctx.moveTo(0, centerY)
-        ctx.lineTo(w, centerY)
-        ctx.stroke()
     }
 
     // Draw waveforms for sounds
@@ -122,6 +136,11 @@ export function Sounds(props) {
             drawPeaksToCanvas(canvas, peaks)
         })
     }, [sounds])
+
+    // Filter sounds based on search term
+    const filteredSounds = sounds.filter(sound =>
+        sound.name.toLowerCase().includes(searchTerm.toLowerCase())
+    )
 
     // Drag and drop handlers for reordering
     const handleDragStart = (e, index) => {
@@ -169,8 +188,60 @@ export function Sounds(props) {
         setDragOverIndex(null)
     }
 
+    // Handle folder dropping
+    const handleFolderDrop = async (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        
+        const items = Array.from(e.dataTransfer.items)
+        const audioFiles = []
+        
+        // Process each dropped item
+        for (const item of items) {
+            if (item.kind === 'file') {
+                const entry = item.webkitGetAsEntry()
+                if (entry) {
+                    await processEntry(entry, audioFiles)
+                }
+            }
+        }
+        
+        // Add all found audio files
+        if (audioFiles.length > 0 && onAddFiles) {
+            onAddFiles(audioFiles)
+        }
+    }
+    
+    // Recursively process directory entries to find audio files
+    const processEntry = async (entry, audioFiles) => {
+        if (entry.isFile) {
+            // Check if it's an audio file
+            if (entry.name.match(/\.(wav|mp3|ogg|m4a|aac|flac|webm)$/i)) {
+                const file = await new Promise(resolve => entry.file(resolve))
+                audioFiles.push(file)
+            }
+        } else if (entry.isDirectory) {
+            // Recursively process directory contents
+            const dirReader = entry.createReader()
+            const entries = await new Promise(resolve => {
+                dirReader.readEntries(entries => resolve(entries))
+            })
+            
+            for (const childEntry of entries) {
+                await processEntry(childEntry, audioFiles)
+            }
+        }
+    }
+
     return (
-        <section className={`flex flex-col gap-5 backdrop-brightness-105 text-[var(--color-primary)] shadow-xl rounded-lg p-5 pattern min-w-[200px] ${className || ''}`}>
+        <section 
+            className={`flex flex-col gap-5 backdrop-brightness-105 text-[var(--color-primary)] shadow-xl rounded-lg p-5 pattern min-w-[200px] ${className || ''}`}
+            onDragOver={(e) => {
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'copy'
+            }}
+            onDrop={handleFolderDrop}
+        >
             <h2 className="text-sm font-semibold">Sounds</h2>
             <label className="text-xs px-2 py-1 bg-gray-800 border border-gray-600 rounded cursor-pointer">Import
                 <input type="file" accept="audio/*" multiple onChange={(e) => {
@@ -179,6 +250,17 @@ export function Sounds(props) {
                     if (onAddFiles) onAddFiles(files)
                 }} className="hidden" />
             </label>
+
+            {/* Search Box */}
+            <input
+                type="text"
+                placeholder="Search sounds..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onDragOver={(e) => e.stopPropagation()}
+                onDrop={(e) => e.stopPropagation()}
+                className="text-xs px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:border-[var(--color-primary)]"
+            />
 
             {/* Grid Layout Controls */}
             <div className="flex items-center gap-2">
@@ -202,8 +284,13 @@ export function Sounds(props) {
             </div>
 
             <div className="max-h-[500px] overflow-auto">
-                {sounds.length === 0 ? (
-                    <div className="text-xs text-gray-400/50">No sounds imported. Use Import to add files.</div>
+                {filteredSounds.length === 0 ? (
+                    <div className="text-xs text-gray-400/50">
+                        {sounds.length === 0 
+                            ? "No sounds imported. Use Import to add files or drag & drop folders."
+                            : "No sounds match your search."
+                        }
+                    </div>
                 ) : (
                     <div className={`${
                         gridColumns === 1 
@@ -215,30 +302,35 @@ export function Sounds(props) {
                         gridAutoRows: 'minmax(80px, auto)'
                     } : {}}
                     >
-                        {sounds.map((s, index) => (
-                            <div key={s.id} 
-                                className={`bg-gray-800/50 border border-gray-700 rounded-md text-white shadow-md flex flex-col cursor-grab active:cursor-grabbing overflow-hidden transition-all duration-200 ${
-                                    draggedIndex === index ? 'opacity-50 scale-95' : ''
-                                } ${
-                                    dragOverIndex === index ? 'border-blue-500 bg-blue-900/20' : ''
-                                }`}
-                                draggable
-                                onDragStart={(e) => handleDragStart(e, index)}
-                                onDragOver={(e) => handleDragOver(e, index)}
-                                onDragLeave={handleDragLeave}
-                                onDrop={(e) => handleDrop(e, index)}
-                                onDragEnd={handleDragEnd}
-                                title={draggedIndex !== null ? `Drop to reorder - ${s.name}` : `Drag to add to track - ${s.name}`}
-                            >
-                                <div className={`flex-1 relative ${gridColumns === 1 ? 'min-h-[40px]' : 'min-h-[50px]'}`}>
-                                    <canvas id={`soundcanvas-${s.id}`} className="w-full h-full" />
+                        {filteredSounds.map((s, filteredIndex) => {
+                            // Find the original index in the sounds array
+                            const originalIndex = sounds.findIndex(sound => sound.id === s.id)
+                            return (
+                                <div key={s.id} 
+                                    className={`bg-gray-800/50 border border-gray-700 rounded-md text-white shadow-md flex flex-col cursor-grab active:cursor-grabbing overflow-hidden transition-all duration-200 ${
+                                        draggedIndex === originalIndex ? 'opacity-50 scale-95' : ''
+                                    } ${
+                                        dragOverIndex === originalIndex ? 'border-blue-500 bg-blue-900/20' : ''
+                                    }`}
+                                    draggable
+                                    onDragStart={(e) => handleDragStart(e, originalIndex)}
+                                    onDragOver={(e) => handleDragOver(e, originalIndex)}
+                                    onDragLeave={handleDragLeave}
+                                    onDrop={(e) => handleDrop(e, originalIndex)}
+                                    onDragEnd={handleDragEnd}
+                                    onClick={() => playSound(s)}
+                                    title={draggedIndex !== null ? `Drop to reorder - ${s.name}` : `Click to play or drag to add to track - ${s.name}`}
+                                >
+                                    <div className={`flex-1 relative ${gridColumns === 1 ? 'min-h-[40px]' : 'min-h-[50px]'}`}>
+                                        <canvas id={`soundcanvas-${s.id}`} className="w-full h-full" />
+                                    </div>
+                                    <div className="px-2 py-1 text-xs bg-black/40 border-t border-gray-600">
+                                        <div className="truncate font-medium" title={s.name}>{s.name}</div>
+                                        <div className="text-gray-400 text-[10px]">{Math.round((s.duration || 0) * 10) / 10}s</div>
+                                    </div>
                                 </div>
-                                <div className="px-2 py-1 text-xs bg-black/40 border-t border-gray-600">
-                                    <div className="truncate font-medium" title={s.name}>{s.name}</div>
-                                    <div className="text-gray-400 text-[10px]">{Math.round((s.duration || 0) * 10) / 10}s</div>
-                                </div>
-                            </div>
-                        ))}
+                            )
+                        })}
                     </div>
                 )}
             </div>

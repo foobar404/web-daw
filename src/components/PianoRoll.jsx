@@ -4,6 +4,8 @@ export function PianoRoll(props) {
     const {
         sounds = [],
         onCreateClip,
+        onUpdateClip,
+        onUpdatePianoRollSound,
         selectedTrackId,
         PPS = 80,
         className
@@ -64,7 +66,6 @@ export function PianoRoll(props) {
 
             return clip
         } catch (error) {
-            console.error('Failed to create note clip:', error)
             return null
         }
     }
@@ -125,6 +126,13 @@ export function PianoRoll(props) {
         return () => document.removeEventListener('mouseup', handleGlobalMouseUp)
     }, [])
 
+    // Update piano roll clips when selected sound changes
+    useEffect(() => {
+        if (selectedSoundId && onUpdatePianoRollSound) {
+            onUpdatePianoRollSound(selectedSoundId)
+        }
+    }, [selectedSoundId, onUpdatePianoRollSound])
+
     // Play preview of a note
     const playNotePreview = async (semitone) => {
         if (!selectedSoundId) return
@@ -142,7 +150,7 @@ export function PianoRoll(props) {
             source.connect(ctx.destination)
             source.start(0)
         } catch (error) {
-            console.error('Failed to play note preview:', error)
+            // Failed to play note preview
         }
     }
 
@@ -150,56 +158,25 @@ export function PianoRoll(props) {
     const generateClip = async () => {
         if (notes.length === 0 || !selectedTrackId) return
 
-        const ctx = ensureAudioContext()
-        const sampleRate = 44100
         const totalDuration = Math.max(...notes.map(n => n.start + n.duration))
-        const totalSamples = Math.ceil(totalDuration * sampleRate)
 
-        // Create offline context for mixing
-        const offlineCtx = new OfflineAudioContext(2, totalSamples, sampleRate)
-
-        // Mix all notes
-        for (const note of notes) {
-            const sound = sounds.find(s => String(s.id) === String(note.soundId))
-            if (!sound || !sound.buffer) continue
-
-            try {
-                const source = offlineCtx.createBufferSource()
-                source.buffer = sound.buffer
-                source.playbackRate.value = getPlaybackRate(note.transposition)
-
-                // Calculate when to start based on transposition (higher pitch = shorter duration)
-                const adjustedDuration = note.duration / source.playbackRate.value
-                const startTime = Math.max(0, note.start - (note.duration - adjustedDuration) / 2)
-
-                source.connect(offlineCtx.destination)
-                source.start(startTime)
-            } catch (error) {
-                console.error('Failed to add note to mix:', error)
-            }
+        // Create clip with notes data instead of pre-mixed buffer
+        const finalClip = {
+            id: Date.now(),
+            name: `Piano Roll Clip (${notes.length} notes)`,
+            duration: totalDuration,
+            start: 0,
+            type: 'pianoRoll',
+            notes: notes.map(note => ({ ...note })), // Store notes data
+            soundId: selectedSoundId // Store current sound ID
         }
 
-        try {
-            const mixedBuffer = await offlineCtx.startRendering()
-
-            // Create final clip
-            const finalClip = {
-                id: Date.now(),
-                name: `Piano Roll Clip (${notes.length} notes)`,
-                buffer: mixedBuffer,
-                duration: totalDuration,
-                start: 0
-            }
-
-            // Add to selected track
-            if (onCreateClip) {
-                onCreateClip(selectedTrackId, finalClip)
-            }
-
-            // Notes are kept in piano roll for further editing
-        } catch (error) {
-            console.error('Failed to generate clip:', error)
+        // Add to selected track
+        if (onCreateClip) {
+            onCreateClip(selectedTrackId, finalClip)
         }
+
+        // Notes are kept in piano roll for further editing
     }
 
     // Play the current sequence
@@ -227,7 +204,7 @@ export function PianoRoll(props) {
                 source.connect(ctx.destination)
                 source.start(startTime + note.start)
             } catch (error) {
-                console.error('Failed to play note:', error)
+                // Failed to play note
             }
         }
 
