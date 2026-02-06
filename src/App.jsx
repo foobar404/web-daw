@@ -857,6 +857,12 @@ function App() {
       {panelVisibility.tapPad && (
         <TapPad
           sounds={sounds}
+          onAddSound={(buffer, name) => {
+            const s = { id: nextIds.current.sound++, name, buffer, duration: buffer.duration }
+            setSounds((p) => [...p, s])
+          }}
+          isPlaying={isPlaying}
+          decodeFileToBuffer={decodeFileToBuffer}
         />
       )}
 

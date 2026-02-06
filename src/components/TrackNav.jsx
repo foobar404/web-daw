@@ -55,6 +55,12 @@ export function TrackNav(props) {
                 type="text"
                 value={props.projectName || ''}
                 onChange={(e) => props.onProjectNameChange?.(e.target.value)}
+                onKeyDown={(e) => {
+                    // Prevent keyboard shortcuts when typing in project name
+                    if (e.code === 'Space' || e.code === 'Enter' || e.code === 'Escape') {
+                        e.stopPropagation()
+                    }
+                }}
                 className="flex-1 max-w-xs px-3 py-1 bg-gray-800 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:border-[var(--color-primary)]"
                 placeholder="Project Name"
                 title="Project Name"
