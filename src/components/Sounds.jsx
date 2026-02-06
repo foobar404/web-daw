@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 
 export function Sounds(props) {
-    const { sounds = [], onAddFiles, onReorderSounds, className } = props
+    const { sounds = [], onAddFiles, onReorderSounds, onRemoveSound, className } = props
     const [draggedIndex, setDraggedIndex] = useState(null)
     const [dragOverIndex, setDragOverIndex] = useState(null)
     const [gridColumns, setGridColumns] = useState(1)
@@ -323,6 +323,16 @@ export function Sounds(props) {
                                 >
                                     <div className={`flex-1 relative ${gridColumns === 1 ? 'min-h-[40px]' : 'min-h-[50px]'}`}>
                                         <canvas id={`soundcanvas-${s.id}`} className="w-full h-full" />
+                                        <button
+                                            className="absolute top-1 right-1 w-5 h-5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-full flex items-center justify-center opacity-75 hover:opacity-100 transition-opacity"
+                                            onClick={(e) => {
+                                                e.stopPropagation()
+                                                if (onRemoveSound) onRemoveSound(s.id)
+                                            }}
+                                            title="Remove sound"
+                                        >
+                                            ×
+                                        </button>
                                     </div>
                                     <div className="px-2 py-1 text-xs bg-black/40 border-t border-gray-600">
                                         <div className="truncate font-medium" title={s.name}>{s.name}</div>

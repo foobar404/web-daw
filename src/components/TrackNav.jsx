@@ -1,5 +1,5 @@
 import React from 'react';
-import { FiPlay, FiPause, FiDownload, FiMusic, FiGrid, FiLayers } from 'react-icons/fi';
+import { FiPlay, FiPause, FiDownload, FiSave, FiFolder, FiMusic, FiGrid, FiLayers } from 'react-icons/fi';
 import { MdOutlinePiano } from "react-icons/md";
 
 const panelConfigs = [
@@ -26,6 +26,22 @@ export function TrackNav(props) {
                     {props.isPlaying ? <FiPause className="w-5 h-5" /> : <FiPlay className="w-5 h-5" />}
                 </button>
                 <button 
+                    onClick={props.saveProject} 
+                    className="p-2 rounded hover:bg-gray-800" 
+                    title="Save Project" 
+                    aria-label="Save Project"
+                >
+                    <FiSave className="w-5 h-5" />
+                </button>
+                <button 
+                    onClick={props.loadProject} 
+                    className="p-2 rounded hover:bg-gray-800" 
+                    title="Load Project" 
+                    aria-label="Load Project"
+                >
+                    <FiFolder className="w-5 h-5" />
+                </button>
+                <button 
                     onClick={props.exportMp3} 
                     className="p-2 rounded hover:bg-gray-800" 
                     title="Export MP3" 
@@ -34,6 +50,15 @@ export function TrackNav(props) {
                     <FiDownload className="w-5 h-5" />
                 </button>
             </div>
+
+            <input
+                type="text"
+                value={props.projectName || ''}
+                onChange={(e) => props.onProjectNameChange?.(e.target.value)}
+                className="flex-1 max-w-xs px-3 py-1 bg-gray-800 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:border-[var(--color-primary)]"
+                placeholder="Project Name"
+                title="Project Name"
+            />
 
             <div className="flex items-center gap-1">
                 {panelConfigs.map(({ key, icon: Icon, title }) => (
@@ -49,7 +74,7 @@ export function TrackNav(props) {
                 ))}
             </div>
 
-            <div className="flex-1 text-center text-lg font-mono">
+            <div className="text-center text-lg font-mono min-w-[60px]">
                 {timeDisplay}
             </div>
         </header>

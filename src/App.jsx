@@ -29,6 +29,7 @@ function App() {
   const playbackStartOffsetRef = useRef(0)
   const playbackTimerRef = useRef(null)
   const [sounds, setSounds] = useState([])
+  const draggingRef = useRef(null)
   const [recordingTrackId, setRecordingTrackId] = useState(null)
   const [selectedTrackId, setSelectedTrackId] = useState(1)
   const [snapEnabled, setSnapEnabled] = useState(true)
@@ -41,6 +42,9 @@ function App() {
     tracks: true,
     pianoRoll: true
   })
+
+  // Project name state
+  const [projectName, setProjectName] = useState('Untitled Project')
 
   // Refs for panels
   const soundsRef = useRef(null)
@@ -271,6 +275,10 @@ function App() {
       copy.splice(toIndex, 0, removed)
       return copy
     })
+  }
+
+  function removeSound(soundId) {
+    setSounds((prev) => prev.filter(sound => sound.id !== soundId))
   }
 
   function onDropSound(trackId, soundId, start) {
@@ -698,6 +706,115 @@ function App() {
     return new Blob([arrayBuffer], { type: 'audio/wav' })
   }
 
+  // Save project to file
+  async function saveProject() {
+    try {
+      // Convert audio buffers to base64 for serialization
+      const serializedSounds = await Promise.all(sounds.map(async (sound) => {
+        const wavBlob = audioBufferToWav(sound.buffer)
+        const arrayBuffer = await wavBlob.arrayBuffer()
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+        return {
+          id: sound.id,
+          name: sound.name,
+          duration: sound.duration,
+          audioData: base64
+        }
+      }))
+
+      const projectData = {
+        version: '1.0',
+        projectName,
+        tracks,
+        sounds: serializedSounds,
+        panelVisibility,
+        selectedTrackId,
+        snapEnabled,
+        loop,
+        nextIds: nextIds.current
+      }
+
+      const jsonString = JSON.stringify(projectData, null, 2)
+      const blob = new Blob([jsonString], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${projectName.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.daw`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      alert('Failed to save project: ' + error.message)
+    }
+  }
+
+  // Load project from file
+  async function loadProject() {
+    try {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.accept = '.daw'
+      input.onchange = async (e) => {
+        const file = e.target.files[0]
+        if (!file) return
+
+        const text = await file.text()
+        const projectData = JSON.parse(text)
+
+        // Validate project data
+        if (!projectData.version || !projectData.tracks) {
+          throw new Error('Invalid project file')
+        }
+
+        // Stop any playing audio
+        stopPlayback()
+
+        // Load sounds
+        const loadedSounds = await Promise.all(projectData.sounds.map(async (soundData) => {
+          // Ensure audio context is initialized
+          if (!audioCtxRef.current) {
+            const AC = window.AudioContext || window.webkitAudioContext
+            audioCtxRef.current = new AC({ latencyHint: 'interactive' })
+          }
+
+          const binaryString = atob(soundData.audioData)
+          const bytes = new Uint8Array(binaryString.length)
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i)
+          }
+          const arrayBuffer = bytes.buffer
+          const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer.slice(0))
+
+          return {
+            id: soundData.id,
+            name: soundData.name,
+            buffer: audioBuffer,
+            duration: soundData.duration
+          }
+        }))
+
+        // Update state
+        setProjectName(projectData.projectName || 'Untitled Project')
+        setTracks(projectData.tracks || [])
+        setSounds(loadedSounds)
+        setPanelVisibility(projectData.panelVisibility || {
+          sounds: true,
+          tapPad: true,
+          tracks: true,
+          pianoRoll: true
+        })
+        setSelectedTrackId(projectData.selectedTrackId || 1)
+        setSnapEnabled(projectData.snapEnabled !== false)
+        setLoop(projectData.loop || false)
+        nextIds.current = projectData.nextIds || { track: 2, clip: 1, sound: 1 }
+      }
+      input.click()
+    } catch (error) {
+      alert('Failed to load project: ' + error.message)
+    }
+  }
+
   // Calculate grid columns based on panel visibility
   const getGridColumns = () => {
     const visibleCount = Object.values(panelVisibility).filter(Boolean).length
@@ -710,6 +827,8 @@ function App() {
       <TrackNav
         togglePlayPause={togglePlayPause}
         stopPlayback={stopPlayback}
+        saveProject={saveProject}
+        loadProject={loadProject}
         exportMp3={exportMp3}
         isPlaying={isPlaying}
         tracks={tracks}
@@ -717,6 +836,8 @@ function App() {
         secondsToMmSs={secondsToMmSs}
         panelVisibility={panelVisibility}
         onTogglePanel={togglePanel}
+        projectName={projectName}
+        onProjectNameChange={setProjectName}
         style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 10 }}
       />
       <div className="w-screen h-screen overflow-hidden grid gap-4" 
@@ -729,6 +850,7 @@ function App() {
           sounds={sounds}
           onAddFiles={addSounds}
           onReorderSounds={reorderSounds}
+          onRemoveSound={removeSound}
         />
       )}
 

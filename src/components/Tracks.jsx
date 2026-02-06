@@ -199,6 +199,9 @@ export function Tracks(props) {
 
     // Draw canvas waveforms for clips
     useEffect(() => {
+        // Clear the drawn width cache when tracks change to ensure redraws
+        drawnWidth.current.clear()
+        
         // Iterate clips and draw canvases
         tracks.forEach(track => {
             track.clips.forEach(clip => {
@@ -206,17 +209,11 @@ export function Tracks(props) {
                 if (!canvas) return
 
                 const width = Math.max(1, Math.floor((clip.duration * PPS)))
-                const lastW = drawnWidth.current.get(clip.id) || 0
 
-                // Always redraw if this is a new canvas or if size changed significantly
-                // Use a small tolerance to account for minor positioning changes
-                const tolerance = 2
-                if (lastW === 0 || Math.abs(lastW - width) > tolerance) {
-                    // Use cached peaks (higher resolution) and draw scaled to the canvas width
-                    const peaks = computePeaks(clip.buffer, 1024) || new Float32Array(1024).fill(0)
-                    drawPeaksToCanvas(canvas, peaks)
-                    drawnWidth.current.set(clip.id, width)
-                }
+                // Use cached peaks (higher resolution) and draw scaled to the canvas width
+                const peaks = computePeaks(clip.buffer, 1024) || new Float32Array(1024).fill(0)
+                drawPeaksToCanvas(canvas, peaks)
+                drawnWidth.current.set(clip.id, width)
             })
         })
     }, [tracks, PPS])
@@ -443,7 +440,7 @@ export function Tracks(props) {
                                             }}
                                             title={`Right-click to delete, Double-click to duplicate - ${c.name}`}>
                                             <div className="flex-1 relative">
-                                                <canvas id={`wavecanvas-${c.id}`} className="w-full h-[calc(100%-1.25rem)]" />
+                                                <canvas id={`wavecanvas-${c.id}`} className="w-full h-[calc(100%-2rem)]" />
                                                 <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between gap-2 px-2 py-1 text-xs bg-black/40">
                                                     <span className="text-[10px] text-gray-300">{secondsToMmSs(c.start)}</span>
                                                     <span className="text-[10px] text-gray-300">{secondsToMmSs(c.duration)}</span>
