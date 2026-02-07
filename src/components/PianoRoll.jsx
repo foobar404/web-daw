@@ -4,6 +4,7 @@ export function PianoRoll(props) {
     const {
         sounds = [],
         onCreateClip,
+        onCreateSound,
         onUpdateClip,
         onUpdatePianoRollSound,
         selectedTrackId,
@@ -12,7 +13,7 @@ export function PianoRoll(props) {
     } = props
 
     const [selectedSoundId, setSelectedSoundId] = useState(null)
-    const [noteDuration, setNoteDuration] = useState(0.25) // in beats (0.25 = sixteenth note)
+    const [noteDuration, setNoteDuration] = useState(0.0625) // in fractions (0.0625 = sixteenth note)
     const [transposition, setTransposition] = useState(0) // in semitones
     const [isPlaying, setIsPlaying] = useState(false)
     const [currentTime, setCurrentTime] = useState(0)
@@ -20,16 +21,21 @@ export function PianoRoll(props) {
     const [gridWidth] = useState(64) // 64 sixteenth notes visible (4 measures)
     const [gridHeight] = useState(25) // 25 semitones (2 octaves + 1 note)
     const [isDragging, setIsDragging] = useState(false)
+    const [loop, setLoop] = useState(false)
     const playheadRef = useRef(null)
     const audioCtxRef = useRef(null)
+    const prevTranspositionRef = useRef(0)
+    const activeSourcesRef = useRef([])
+    const animationFrameRef = useRef(null)
+    const startTimeRef = useRef(null)
 
-    // Note durations in beats
+    // Note durations as fractions of whole note
     const noteDurations = [
-        { name: 'Whole', value: 4, label: '𝅝' },
-        { name: 'Half', value: 2, label: '𝅗𝅥' },
-        { name: 'Quarter', value: 1, label: '♩' },
-        { name: 'Eighth', value: 0.5, label: '♪' },
-        { name: 'Sixteenth', value: 0.25, label: '♬' }
+        { name: 'Whole', value: 1.0, label: '𝅝' },
+        { name: 'Half', value: 0.5, label: '𝅗𝅥' },
+        { name: 'Quarter', value: 0.25, label: '♩' },
+        { name: 'Eighth', value: 0.125, label: '♪' },
+        { name: 'Sixteenth', value: 0.0625, label: '♬' }
     ]
 
     // Initialize audio context
@@ -72,9 +78,14 @@ export function PianoRoll(props) {
 
     // Add note to piano roll (with duplicate prevention)
     const addNote = async (beat, semitone) => {
-        if (!selectedSoundId) return
+        let soundId = selectedSoundId
+        if (!soundId && sounds.length > 0) {
+            soundId = sounds[0].id
+            setSelectedSoundId(soundId)
+        }
+        if (!soundId) return
 
-        const transposition = semitone - 12 // Center at middle C-ish
+        const noteTransposition = semitone - 12 + transposition // Center at middle C-ish + global transposition
         
         // Check if note already exists at this position
         const existingNoteIndex = notes.findIndex(note => 
@@ -83,26 +94,25 @@ export function PianoRoll(props) {
         
         if (existingNoteIndex !== -1) return // Don't add duplicate notes
 
-        const note = await createNoteClip(beat, noteDuration, selectedSoundId, transposition)
+        const note = await createNoteClip(beat, noteDuration, soundId, noteTransposition)
 
         if (note) {
             setNotes(prev => [...prev, {
                 ...note,
                 semitone,
-                transposition
+                transposition: noteTransposition
             }])
         }
     }
 
     // Drag handlers for click-and-drag note placement
     const handleMouseDown = (beat, semitone) => {
-        if (!selectedSoundId) return
         setIsDragging(true)
         addNote(beat, semitone)
     }
 
     const handleMouseEnter = (beat, semitone) => {
-        if (isDragging && selectedSoundId) {
+        if (isDragging) {
             addNote(beat, semitone)
         }
     }
@@ -133,11 +143,42 @@ export function PianoRoll(props) {
         }
     }, [selectedSoundId, onUpdatePianoRollSound])
 
+    // Update all notes to use the new selected sound
+    useEffect(() => {
+        if (selectedSoundId) {
+            setNotes(prev => prev.map(note => ({ ...note, soundId: selectedSoundId })))
+        }
+    }, [selectedSoundId])
+
+    // Auto-select first sound if none selected
+    useEffect(() => {
+        if (!selectedSoundId && sounds.length > 0) {
+            setSelectedSoundId(sounds[0].id)
+        }
+    }, [sounds, selectedSoundId])
+
+    // Update all notes' transposition when global transposition changes
+    useEffect(() => {
+        const delta = transposition - prevTranspositionRef.current
+        if (delta !== 0) {
+            setNotes(prev => prev.map(note => ({
+                ...note,
+                transposition: note.transposition + delta
+            })))
+            prevTranspositionRef.current = transposition
+        }
+    }, [transposition])
+
     // Play preview of a note
     const playNotePreview = async (semitone) => {
-        if (!selectedSoundId) return
+        let soundId = selectedSoundId
+        if (!soundId && sounds.length > 0) {
+            soundId = sounds[0].id
+            setSelectedSoundId(soundId)
+        }
+        if (!soundId) return
 
-        const sound = sounds.find(s => String(s.id) === String(selectedSoundId))
+        const sound = sounds.find(s => String(s.id) === String(soundId))
         if (!sound || !sound.buffer) return
 
         const ctx = ensureAudioContext()
@@ -146,7 +187,7 @@ export function PianoRoll(props) {
         try {
             const source = ctx.createBufferSource()
             source.buffer = sound.buffer
-            source.playbackRate.value = getPlaybackRate(semitone - 12) // Center at middle C-ish
+            source.playbackRate.value = getPlaybackRate(semitone - 12 + transposition) // Center at middle C-ish + global transposition
             source.connect(ctx.destination)
             source.start(0)
         } catch (error) {
@@ -154,36 +195,33 @@ export function PianoRoll(props) {
         }
     }
 
-    // Generate final clip from all notes
-    const generateClip = async () => {
-        if (notes.length === 0 || !selectedTrackId) return
+    // Generate final sound from all notes
+    const generateSound = async () => {
+        if (notes.length === 0) return
 
-        const totalDuration = Math.max(...notes.map(n => n.start + n.duration))
-
-        // Create clip with notes data instead of pre-mixed buffer
-        const finalClip = {
-            id: Date.now(),
-            name: `Piano Roll Clip (${notes.length} notes)`,
-            duration: totalDuration,
-            start: 0,
-            type: 'pianoRoll',
-            notes: notes.map(note => ({ ...note })), // Store notes data
-            soundId: selectedSoundId // Store current sound ID
+        if (onCreateSound) {
+            await onCreateSound(notes)
         }
-
-        // Add to selected track
-        if (onCreateClip) {
-            onCreateClip(selectedTrackId, finalClip)
-        }
-
-        // Notes are kept in piano roll for further editing
     }
 
     // Play the current sequence
     const playSequence = async () => {
         if (isPlaying) {
+            // Stop playback
             setIsPlaying(false)
             setCurrentTime(0)
+            
+            // Stop all active audio sources
+            for (const source of activeSourcesRef.current) {
+                try { source.stop(0) } catch (e) {}
+            }
+            activeSourcesRef.current = []
+            
+            // Cancel animation frame
+            if (animationFrameRef.current) {
+                cancelAnimationFrame(animationFrameRef.current)
+                animationFrameRef.current = null
+            }
             return
         }
 
@@ -191,7 +229,11 @@ export function PianoRoll(props) {
         const ctx = ensureAudioContext()
         ctx.resume()
 
-        const startTime = ctx.currentTime
+        startTimeRef.current = ctx.currentTime
+        activeSourcesRef.current = []
+
+        // Calculate total duration
+        const totalDuration = notes.length > 0 ? Math.max(...notes.map(n => n.start + n.duration)) : 0
 
         for (const note of notes) {
             const sound = sounds.find(s => String(s.id) === String(note.soundId))
@@ -202,7 +244,8 @@ export function PianoRoll(props) {
                 source.buffer = sound.buffer
                 source.playbackRate.value = getPlaybackRate(note.transposition)
                 source.connect(ctx.destination)
-                source.start(startTime + note.start)
+                source.start(startTimeRef.current + note.start)
+                activeSourcesRef.current.push(source)
             } catch (error) {
                 // Failed to play note
             }
@@ -210,20 +253,45 @@ export function PianoRoll(props) {
 
         // Animate playhead
         const animate = () => {
-            if (!isPlaying) return
-
-            const elapsed = ctx.currentTime - startTime
+            const elapsed = ctx.currentTime - startTimeRef.current
             setCurrentTime(elapsed)
 
-            if (elapsed < Math.max(...notes.map(n => n.start + n.duration), 0)) {
-                requestAnimationFrame(animate)
+            if (elapsed < totalDuration) {
+                animationFrameRef.current = requestAnimationFrame(animate)
             } else {
-                setIsPlaying(false)
-                setCurrentTime(0)
+                if (loop) {
+                    // Loop back to start
+                    startTimeRef.current = ctx.currentTime
+                    setCurrentTime(0)
+                    // Restart all notes
+                    activeSourcesRef.current = []
+                    for (const note of notes) {
+                        const sound = sounds.find(s => String(s.id) === String(note.soundId))
+                        if (!sound || !sound.buffer) continue
+
+                        try {
+                            const source = ctx.createBufferSource()
+                            source.buffer = sound.buffer
+                            source.playbackRate.value = getPlaybackRate(note.transposition)
+                            source.connect(ctx.destination)
+                            source.start(ctx.currentTime + note.start)
+                            activeSourcesRef.current.push(source)
+                        } catch (error) {
+                            // Failed to play note
+                        }
+                    }
+                    animationFrameRef.current = requestAnimationFrame(animate)
+                } else {
+                    // Sequence finished - auto stop
+                    setIsPlaying(false)
+                    setCurrentTime(0)
+                    activeSourcesRef.current = []
+                    animationFrameRef.current = null
+                }
             }
         }
 
-        requestAnimationFrame(animate)
+        animationFrameRef.current = requestAnimationFrame(animate)
     }
 
     return (
@@ -310,6 +378,16 @@ export function PianoRoll(props) {
                     {/* Action Buttons - Compact */}
                     <div className="flex gap-1.5">
                         <button
+                            onClick={() => setLoop(!loop)}
+                            className={`px-3 py-1.5 text-xs font-medium rounded border transition-all duration-200 ${
+                                loop
+                                    ? 'bg-orange-600/90 border-orange-500 text-white hover:bg-orange-500'
+                                    : 'bg-gray-600/90 border-gray-500 text-white hover:bg-gray-500'
+                            }`}
+                        >
+                            🔄 Loop
+                        </button>
+                        <button
                             onClick={playSequence}
                             disabled={notes.length === 0}
                             className={`px-3 py-1.5 text-xs font-medium rounded border transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed ${
@@ -321,11 +399,11 @@ export function PianoRoll(props) {
                             {isPlaying ? '⏹️ Stop' : '▶️ Play'}
                         </button>
                         <button
-                            onClick={generateClip}
-                            disabled={notes.length === 0 || !selectedTrackId}
+                            onClick={generateSound}
+                            disabled={notes.length === 0}
                             className="flex-1 px-3 py-1.5 text-xs font-medium bg-[var(--color-primary)]/90 border border-[var(--color-primary)] text-white rounded hover:bg-[var(--color-primary)] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            🎵 Create Clip ({notes.length})
+                            🎵 Create Sound ({notes.length})
                         </button>
                         <button
                             onClick={() => setNotes([])}
@@ -365,8 +443,8 @@ export function PianoRoll(props) {
                         <div className="flex-1 relative">
                             {/* Time labels (top) */}
                             <div className="h-6 bg-gray-800 border-b border-gray-600 flex">
-                                {Array.from({ length: gridWidth / 4 }, (_, i) => (
-                                    <div key={i} className="flex-1 border-r border-gray-700 flex items-center justify-center text-xs text-gray-400 min-w-[96px]">
+                                {Array.from({ length: gridWidth / 16 }, (_, i) => (
+                                    <div key={i} className="flex-1 border-r border-gray-700 flex items-center justify-center text-xs text-gray-400 min-w-[384px]">
                                         {i + 1}
                                     </div>
                                 ))}
@@ -378,7 +456,7 @@ export function PianoRoll(props) {
                                     <div key={row} className="flex">
                                         {Array.from({ length: gridWidth }, (_, col) => {
                                             const semitone = gridHeight - 1 - row
-                                            const beat = col * 0.25 // 16th note resolution
+                                            const beat = col * 0.0625 // 16th note resolution (1/16 of whole note)
                                             const isBlackKey = ['C#', 'D#', 'F#', 'G#', 'A#'].includes(
                                                 ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][semitone % 12]
                                             )
@@ -404,9 +482,9 @@ export function PianoRoll(props) {
                                         key={index}
                                         className="absolute bg-blue-600 border border-blue-400 rounded cursor-pointer hover:bg-blue-500"
                                         style={{
-                                            left: (note.start / 0.25) * 24, // Convert beats to pixels (24px per beat)
+                                            left: (note.start / 0.0625) * 24, // Convert to pixels (24px per 16th note)
                                             top: ((gridHeight - 1 - note.semitone) * 32), // Convert semitone to pixels
-                                            width: Math.max(24, (note.duration / 0.25) * 24), // Convert duration to pixels
+                                            width: Math.max(24, (note.duration / 0.0625) * 24), // Convert duration to pixels
                                             height: 28,
                                             zIndex: 10
                                         }}
@@ -424,7 +502,7 @@ export function PianoRoll(props) {
                                         ref={playheadRef}
                                         className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-20 pointer-events-none"
                                         style={{
-                                            left: (currentTime / 0.25) * 24
+                                            left: (currentTime / 0.0625) * 24
                                         }}
                                     />
                                 )}

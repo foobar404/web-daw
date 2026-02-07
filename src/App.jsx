@@ -4,6 +4,7 @@ import { Tracks } from "./components/Tracks";
 import { Sounds } from './components/Sounds';
 import { PianoRoll } from './components/PianoRoll';
 import { TapPad } from './components/TapPad';
+import { SoundMixer } from './components/SoundMixer';
 import * as lamejs from 'lamejs';
 
 // Pixels per second for the simple timeline rendering
@@ -40,7 +41,8 @@ function App() {
     sounds: true,
     tapPad: true,
     tracks: true,
-    pianoRoll: true
+    pianoRoll: true,
+    soundMixer: true
   })
 
   // Project name state
@@ -75,7 +77,7 @@ function App() {
       observers.tapPad = new ResizeObserver(() => updateSpan('tapPad', tapPadRef))
       observers.tapPad.observe(tapPadRef.current)
     }
-    if ((panelVisibility.tracks || panelVisibility.pianoRoll) && tracksRef.current) {
+    if ((panelVisibility.tracks || panelVisibility.pianoRoll || panelVisibility.soundMixer) && tracksRef.current) {
       observers.tracks = new ResizeObserver(() => updateSpan('tracks', tracksRef))
       observers.tracks.observe(tracksRef.current)
     }
@@ -277,6 +279,11 @@ function App() {
     })
   }
 
+  function createSoundFromMixer(soundData) {
+    const s = { id: nextIds.current.sound++, name: soundData.name, buffer: soundData.buffer, duration: soundData.duration }
+    setSounds((p) => [...p, s])
+  }
+
   function removeSound(soundId) {
     setSounds((prev) => prev.filter(sound => sound.id !== soundId))
   }
@@ -314,6 +321,39 @@ function App() {
         c.type === 'pianoRoll' ? { ...c, soundId } : c
       )
     })))
+  }
+
+  async function createSoundFromPianoRoll(notes) {
+    if (notes.length === 0) return
+
+    try {
+      const sampleRate = 44100
+      const duration = Math.max(...notes.map(n => n.start + n.duration))
+      const bufferLength = Math.ceil((duration + 0.5) * sampleRate)
+      const ctx = new OfflineAudioContext(2, bufferLength, sampleRate)
+
+      for (const note of notes) {
+        const sound = sounds.find(s => String(s.id) === String(note.soundId))
+        if (!sound || !sound.buffer) continue
+
+        const source = ctx.createBufferSource()
+        source.buffer = sound.buffer
+        source.playbackRate.value = Math.pow(2, note.transposition / 12)
+        source.connect(ctx.destination)
+        source.start(note.start)
+      }
+
+      const rendered = await ctx.startRendering()
+      const s = { 
+        id: nextIds.current.sound++, 
+        name: `Piano Roll Sound (${notes.length} notes)`, 
+        buffer: rendered, 
+        duration: rendered.duration 
+      }
+      setSounds((p) => [...p, s])
+    } catch (error) {
+      alert('Failed to create sound from piano roll.')
+    }
   }
 
   function updateTrackVolume(trackId, volume) {
@@ -802,7 +842,8 @@ function App() {
           sounds: true,
           tapPad: true,
           tracks: true,
-          pianoRoll: true
+          pianoRoll: true,
+          soundMixer: true
         })
         setSelectedTrackId(projectData.selectedTrackId || 1)
         setSnapEnabled(projectData.snapEnabled !== false)
@@ -866,12 +907,14 @@ function App() {
         />
       )}
 
-      {(panelVisibility.tracks || panelVisibility.pianoRoll) && (
+      {(panelVisibility.tracks || panelVisibility.pianoRoll || panelVisibility.soundMixer) && (
         <div className="grid gap-4 min-h-0"
             style={{
-              gridTemplateRows: panelVisibility.tracks && panelVisibility.pianoRoll
-                ? '1fr 1fr'
-                : '1fr'
+              gridTemplateRows: [panelVisibility.tracks, panelVisibility.pianoRoll, panelVisibility.soundMixer]
+                .filter(Boolean).length === 1 ? '1fr'
+                : [panelVisibility.tracks, panelVisibility.pianoRoll, panelVisibility.soundMixer]
+                .filter(Boolean).length === 2 ? '1fr 1fr'
+                : '1fr 1fr 1fr'
             }}>
           {panelVisibility.tracks && (
             <Tracks
@@ -911,10 +954,18 @@ function App() {
             <PianoRoll
               sounds={sounds}
               onCreateClip={onCreatePianoRollClip}
+              onCreateSound={createSoundFromPianoRoll}
               onUpdateClip={updateClip}
               onUpdatePianoRollSound={updatePianoRollSound}
               selectedTrackId={selectedTrackId}
               PPS={PPS}
+            />
+          )}
+
+          {panelVisibility.soundMixer && (
+            <SoundMixer
+              sounds={sounds}
+              onCreateSound={createSoundFromMixer}
             />
           )}
         </div>

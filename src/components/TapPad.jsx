@@ -20,11 +20,10 @@ export function TapPad(props) {
     const { sounds = [], onAddSound, isPlaying, decodeFileToBuffer } = props
     const [padAssignments, setPadAssignments] = useState(new Map()) // padIndex -> soundId
     const [isRecording, setIsRecording] = useState(false)
-    const [recordingMode, setRecordingMode] = useState('manual') // 'manual' or 'auto'
+    const [tapSequence, setTapSequence] = useState([])
+    const [recordingStartTime, setRecordingStartTime] = useState(null)
     const audioCtxRef = useRef(null)
     const destinationRef = useRef(null)
-    const mediaRecorderRef = useRef(null)
-    const recordedChunksRef = useRef([])
 
     // Initialize audio context and destination
     const ensureAudioContext = () => {
@@ -46,58 +45,8 @@ export function TapPad(props) {
             const ctx = ensureAudioContext()
             ctx.resume()
 
-            recordedChunksRef.current = []
-            const stream = destinationRef.current.stream
-            const mr = new MediaRecorder(stream)
-            mediaRecorderRef.current = mr
-
-            mr.ondataavailable = (ev) => {
-                console.log('Data available, size:', ev.data?.size)
-                if (ev.data && ev.data.size > 0) {
-                    recordedChunksRef.current.push(ev.data)
-                }
-            }
-
-            mr.onstop = async () => {
-                console.log('Recording stopped, chunks:', recordedChunksRef.current.length)
-                if (recordedChunksRef.current.length > 0) {
-                    const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' })
-                    console.log('Created blob, size:', blob.size)
-                    
-                    // Check if blob has actual audio data (more than just headers)
-                    if (blob.size < 1000) {
-                        console.warn('Recording too short or empty, skipping')
-                        recordedChunksRef.current = []
-                        mediaRecorderRef.current = null
-                        return
-                    }
-                    
-                    try {
-                        // Use the same decode function as the main app
-                        const audioBuf = await decodeFileToBuffer(blob)
-                        console.log('Successfully decoded audio buffer')
-
-                        // Create a name for the recording
-                        const now = new Date()
-                        const dateTimeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`
-                        const recordingName = `tap-pad-${dateTimeStr}.webm`
-
-                        // Add to sounds library
-                        if (onAddSound) {
-                            onAddSound(audioBuf, recordingName)
-                        }
-                    } catch (err) {
-                        console.error('Failed to process recording:', err)
-                        alert('Recording failed. Please try playing some sounds while recording.')
-                    }
-                } else {
-                    console.log('No recorded chunks to process')
-                }
-                recordedChunksRef.current = []
-                mediaRecorderRef.current = null
-            }
-
-            mr.start(100) // Capture data every 100ms
+            setTapSequence([])
+            setRecordingStartTime(performance.now())
             setIsRecording(true)
         } catch (error) {
             console.error('Failed to start recording:', error)
@@ -105,36 +54,78 @@ export function TapPad(props) {
     }
 
     // Stop recording
-    const stopRecording = () => {
+    const stopRecording = async () => {
         if (!isRecording) return
 
-        const mr = mediaRecorderRef.current
-        if (mr && mr.state !== 'inactive') {
-            mr.stop()
-        }
         setIsRecording(false)
-    }
 
-    // Toggle recording mode
-    const toggleRecordingMode = () => {
-        setRecordingMode(prev => prev === 'manual' ? 'auto' : 'manual')
-    }
-
-    // Handle auto recording based on playback state
-    useEffect(() => {
-        if (recordingMode === 'auto') {
-            if (isPlaying && !isRecording) {
-                startRecording()
-            } else if (!isPlaying && isRecording) {
-                stopRecording()
-            }
+        if (tapSequence.length === 0) {
+            setTapSequence([])
+            setRecordingStartTime(null)
+            return
         }
-    }, [isPlaying, recordingMode, isRecording])
+
+        try {
+            // Calculate total duration including pauses
+            const totalDuration = (performance.now() - recordingStartTime) / 1000
+            
+            // Find the longest sound duration to add padding
+            let maxSoundDuration = 0
+            for (const tap of tapSequence) {
+                const sound = sounds.find(s => String(s.id) === String(tap.soundId))
+                if (sound && sound.buffer) {
+                    maxSoundDuration = Math.max(maxSoundDuration, sound.buffer.duration)
+                }
+            }
+            
+            const sampleRate = 44100
+            const bufferLength = Math.ceil((totalDuration + maxSoundDuration) * sampleRate)
+            const offlineCtx = new OfflineAudioContext(2, bufferLength, sampleRate)
+
+            // Schedule all sounds at their exact timestamps
+            for (const tap of tapSequence) {
+                const sound = sounds.find(s => String(s.id) === String(tap.soundId))
+                if (!sound || !sound.buffer) continue
+
+                const source = offlineCtx.createBufferSource()
+                source.buffer = sound.buffer
+                source.connect(offlineCtx.destination)
+                const startTime = (tap.timestamp - recordingStartTime) / 1000
+                source.start(startTime)
+            }
+
+            const renderedBuffer = await offlineCtx.startRendering()
+
+            // Create a name for the recording
+            const now = new Date()
+            const dateTimeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`
+            const recordingName = `tap-sequence-${dateTimeStr}.wav`
+
+            // Add to sounds library
+            if (onAddSound) {
+                onAddSound(renderedBuffer, recordingName)
+            }
+        } catch (error) {
+            console.error('Failed to process recording:', error)
+            alert('Failed to create recording.')
+        }
+
+        setTapSequence([])
+        setRecordingStartTime(null)
+    }
 
     // Play a sound on a specific pad
     const playPadSound = async (padIndex) => {
         const soundId = padAssignments.get(padIndex)
         if (!soundId) return
+
+        // Record tap with timestamp if recording
+        if (isRecording && recordingStartTime) {
+            setTapSequence(prev => [...prev, {
+                soundId: soundId,
+                timestamp: performance.now()
+            }])
+        }
 
         const sound = sounds.find(s => String(s.id) === String(soundId))
         if (!sound || !sound.buffer) return
@@ -145,15 +136,7 @@ export function TapPad(props) {
         try {
             const source = ctx.createBufferSource()
             source.buffer = sound.buffer
-
-            // Always connect to destination for hearing
             source.connect(ctx.destination)
-
-            // Also connect to recording destination if recording is active
-            if (isRecording && destinationRef.current) {
-                source.connect(destinationRef.current)
-            }
-
             source.start(0)
         } catch (error) {
             console.error('Failed to play pad sound:', error)
@@ -211,29 +194,16 @@ export function TapPad(props) {
                 <h2 className="text-sm font-semibold">Tap Pad</h2>
                 <div className="flex items-center gap-2">
                     <button
-                        onClick={toggleRecordingMode}
-                        className={`px-2 py-1 text-xs rounded border transition-colors ${
-                            recordingMode === 'auto'
-                                ? 'bg-green-600 text-white border-green-600'
+                        onClick={isRecording ? stopRecording : startRecording}
+                        className={`px-3 py-1 text-xs rounded border transition-colors ${
+                            isRecording
+                                ? 'bg-red-600 text-white border-red-600 animate-pulse'
                                 : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600'
                         }`}
-                        title={recordingMode === 'auto' ? 'Auto record mode (records during playback)' : 'Manual record mode'}
+                        title={isRecording ? 'Stop recording (preserves timing & pauses)' : 'Start recording (preserves timing & pauses)'}
                     >
-                        AUTO
+                        {isRecording ? '● REC' : '○ REC'}
                     </button>
-                    {recordingMode === 'manual' && (
-                        <button
-                            onClick={isRecording ? stopRecording : startRecording}
-                            className={`px-3 py-1 text-xs rounded border transition-colors ${
-                                isRecording
-                                    ? 'bg-red-600 text-white border-red-600 animate-pulse'
-                                    : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600'
-                            }`}
-                            title={isRecording ? 'Stop recording' : 'Start recording'}
-                        >
-                            {isRecording ? '● REC' : '○ REC'}
-                        </button>
-                    )}
                 </div>
             </div>
 

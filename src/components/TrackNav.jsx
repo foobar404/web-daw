@@ -1,12 +1,13 @@
 import React from 'react';
-import { FiPlay, FiPause, FiDownload, FiSave, FiFolder, FiMusic, FiGrid, FiLayers } from 'react-icons/fi';
+import { FiPlay, FiPause, FiDownload, FiSave, FiFolder, FiMusic, FiGrid, FiLayers, FiSliders } from 'react-icons/fi';
 import { MdOutlinePiano } from "react-icons/md";
 
 const panelConfigs = [
     { key: 'sounds', icon: FiMusic, title: 'Toggle Sounds Panel' },
     { key: 'tapPad', icon: FiGrid, title: 'Toggle Tap Pad Panel' },
     { key: 'tracks', icon: FiLayers, title: 'Toggle Tracks Panel' },
-    { key: 'pianoRoll', icon: MdOutlinePiano, title: 'Toggle Piano Roll Panel' }
+    { key: 'pianoRoll', icon: MdOutlinePiano, title: 'Toggle Piano Roll Panel' },
+    { key: 'soundMixer', icon: FiSliders, title: 'Toggle Sound Mixer Panel' }
 ];
 
 export function TrackNav(props) {
