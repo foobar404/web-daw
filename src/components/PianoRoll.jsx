@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import { MdOutlinePiano } from 'react-icons/md'
 
 export function PianoRoll(props) {
     const {
@@ -296,8 +297,11 @@ export function PianoRoll(props) {
 
     return (
         <section className={`flex flex-col h-full pattern backdrop-brightness-105 text-[var(--color-primary)] shadow-xl rounded-lg overflow-hidden ${className || ''}`}>
-            <div className="p-4 border-b border-gray-600">
-                <h2 className="text-lg font-semibold">Piano Roll</h2>
+            <div className="bg-pink-600/20 border-b border-pink-500/30 p-4">
+                <h2 className="text-sm font-semibold flex items-center gap-2 text-pink-400">
+                    <MdOutlinePiano className="w-4 h-4" />
+                    Piano Roll
+                </h2>
             </div>
 
             <div className="flex-1 overflow-y-auto p-3 space-y-2">

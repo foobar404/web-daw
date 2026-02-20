@@ -1,0 +1,5 @@
+- piano player rec loop issue 
+- fix sounds dnd issue 
+- pipe all audio into the main audio channel controlled by the navbar
+- add a waveform for the active audio 
+- project renaming isint working 

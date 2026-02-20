@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
+import { FiLayers } from 'react-icons/fi';
 
 export function Tracks(props) {
     const {
@@ -219,89 +220,25 @@ export function Tracks(props) {
     }, [tracks, PPS])
 
     return (
-        <div className={`flex pattern backdrop-brightness-105 text-[var(--color-primary)] shadow-xl rounded-lg ${className || ''}`}>
-            {/* Left sidebar with track actions */}
-            <div className="w-12 bg-gray-800 border-r border-gray-600 flex flex-col items-center py-2 gap-1">
-                <button 
-                    onClick={() => addTrack(selectedTrackId)}
-                    className="w-8 h-8 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded shadow-md flex items-center justify-center transition-colors" 
-                    title="Add Track"
-                >
-                    +
-                </button>
-                <div className="h-px bg-gray-600 w-6 my-1"></div>
-                <button 
-                    onClick={() => selectedTrackId && moveTrackUp(selectedTrackId)}
-                    disabled={!selectedTrackId}
-                    className="w-8 h-8 text-xs bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:opacity-50 text-white rounded shadow-md flex items-center justify-center transition-colors" 
-                    title="Move Track Up"
-                >
-                    ↑
-                </button>
-                <button 
-                    onClick={() => selectedTrackId && moveTrackDown(selectedTrackId)}
-                    disabled={!selectedTrackId}
-                    className="w-8 h-8 text-xs bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:opacity-50 text-white rounded shadow-md flex items-center justify-center transition-colors" 
-                    title="Move Track Down"
-                >
-                    ↓
-                </button>
-                <button 
-                    onClick={() => selectedTrackId && duplicateTrack(selectedTrackId)}
-                    disabled={!selectedTrackId}
-                    className="w-8 h-8 text-xs bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:opacity-50 text-white rounded shadow-md flex items-center justify-center transition-colors" 
-                    title="Duplicate Track"
-                >
-                    ⧉
-                </button>
-                <button 
-                    onClick={() => selectedTrackId && deleteTrack(selectedTrackId)}
-                    disabled={!selectedTrackId}
-                    className="w-8 h-8 text-xs bg-red-600 hover:bg-red-500 disabled:bg-gray-800 disabled:opacity-50 text-white rounded shadow-md flex items-center justify-center transition-colors" 
-                    title="Delete Track"
-                >
-                    🗑
-                </button>
-                <div className="h-px bg-gray-600 w-6 my-1"></div>
-                <button 
-                    onClick={() => {
-                        if (recordingTrackId) {
-                            stopRecording()
-                        } else if (selectedTrackId) {
-                            startRecording(selectedTrackId)
-                        }
-                    }}
-                    disabled={!selectedTrackId && !recordingTrackId}
-                    className={`w-8 h-8 text-xs rounded shadow-md flex items-center justify-center transition-colors text-white ${
-                        recordingTrackId 
-                            ? 'bg-red-600 hover:bg-red-500 animate-pulse' 
-                            : 'bg-green-600 hover:bg-green-500'
-                    } disabled:bg-gray-800 disabled:opacity-50`} 
-                    title={recordingTrackId ? "Stop Recording" : "Record Audio"}
-                >
-                    {recordingTrackId ? '■' : '●'}
-                </button>
-                <div className="h-px bg-gray-600 w-6 my-1"></div>
-                <button 
-                    onClick={() => setSnapEnabled(!snapEnabled)}
-                    className={`w-8 h-8 text-xs rounded shadow-md flex items-center justify-center transition-colors text-white ${
-                        snapEnabled 
-                            ? 'bg-purple-600 hover:bg-purple-500' 
-                            : 'bg-gray-600 hover:bg-gray-500'
-                    }`} 
-                    title={snapEnabled ? "Disable Snap (1s)" : "Enable Snap (1s)"}
-                >
-                    {snapEnabled ? '⊡' : '⊙'}
-                </button>
+        <div className={`flex flex-col pattern backdrop-brightness-105 text-[var(--color-primary)] shadow-xl rounded-lg ${className || ''}`}>
+            <div className="bg-yellow-600/20 border-b border-yellow-500/30 px-4 py-3 rounded-t-lg">
+                <h2 className="text-sm font-semibold flex items-center gap-2 text-yellow-400">
+                    <FiLayers className="w-4 h-4" />
+                    Tracks
+                </h2>
             </div>
-
+            <div className="flex flex-1">
             {/* Main tracks area */}
-            <div className="flex-1 overflow-auto" ref={scrollRef}
+            <div className="flex-1 overflow-y-auto overflow-x-auto" ref={scrollRef}
                 onWheel={(e) => {
                     e.preventDefault()
                     if (scrollRef.current) {
-                        // Convert vertical scroll to horizontal scroll
-                        scrollRef.current.scrollLeft += e.deltaY * 2 // Multiply by 2 for faster scrolling
+                        // Convert vertical scroll to horizontal scroll when shift is held, otherwise allow vertical scroll
+                        if (e.shiftKey) {
+                            scrollRef.current.scrollLeft += e.deltaY * 2
+                        } else {
+                            scrollRef.current.scrollTop += e.deltaY
+                        }
                     }
                 }}>
                 {/* timeline */}
@@ -332,7 +269,14 @@ export function Tracks(props) {
                 </div>
 
                 {/* tracks */}
-                <div className="p-2 relative"
+                <div className="px-4 py-2 min-h-full"
+                    onClick={(e) => {
+                        // Only create track if clicking in open area (not on existing tracks)
+                        const target = e.target.closest('[data-track-id]')
+                        if (!target && e.target === e.currentTarget) {
+                            addTrack()
+                        }
+                    }}
                     onDragOver={(e) => { 
                         e.preventDefault(); 
                         e.dataTransfer.dropEffect = 'copy' 
@@ -364,9 +308,21 @@ export function Tracks(props) {
                             if (onDropSound) onDropSound(newTrackId, sound.id, start)
                         }, 10)
                     }}>
+                    {tracks.length === 0 && (
+                        <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                            <FiLayers className="w-12 h-12 mb-4 opacity-50" />
+                            <p className="text-lg font-medium mb-2">No tracks yet</p>
+                            <p className="text-sm text-center max-w-md">
+                                Click anywhere in this area to create your first track, or drag sounds here to create a track automatically.
+                            </p>
+                        </div>
+                    )}
                     {tracks.map((t) => (
-                        <div key={t.id} data-track-id={t.id} className={`mb-2 ${selectedTrackId === t.id ? 'bg-blue-900/20 border border-blue-500/50 rounded' : ''}`}
-                             onClick={() => setSelectedTrackId(t.id)}>
+                        <div key={t.id} data-track-id={t.id} className={`mb-4 bg-gray-800/30 rounded ${selectedTrackId === t.id ? 'bg-blue-900/20 border border-blue-500/50' : 'border border-gray-700/30'}`}
+                             onClick={(e) => {
+                                 e.stopPropagation()
+                                 setSelectedTrackId(t.id)
+                             }}>
                             <div className="absolute left-0 top-6 bottom-0 w-full pointer-events-none">
                                 {/* Quarter note lines (every 0.5 seconds) */}
                                 {Array.from({ length: Math.ceil(projectDuration / 0.5) + 1 }).map((_, i) => (
@@ -378,7 +334,22 @@ export function Tracks(props) {
                                 <div className="text-sm">{t.name}</div>
                                 <div className="flex items-center gap-2">
                                     <button
-                                        onClick={() => toggleTrackMute(t.id)}
+                                        onClick={(e) => {
+                                            e.stopPropagation()
+                                            if (confirm(`Delete track "${t.name}"?`)) {
+                                                deleteTrack(t.id)
+                                            }
+                                        }}
+                                        className="w-6 h-6 text-xs bg-red-600 hover:bg-red-500 text-white rounded shadow-md flex items-center justify-center transition-colors" 
+                                        title="Delete Track"
+                                    >
+                                        🗑
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation()
+                                            toggleTrackMute(t.id)
+                                        }}
                                         className={`w-6 h-6 text-xs rounded shadow-md flex items-center justify-center transition-colors ${
                                             t.muted 
                                                 ? 'bg-red-600 hover:bg-red-500 text-white' 
@@ -454,6 +425,7 @@ export function Tracks(props) {
                         </div>
                     ))}
                 </div>
+            </div>
             </div>
         </div>
     )

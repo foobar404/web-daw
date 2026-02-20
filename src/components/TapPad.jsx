@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import { FiGrid } from 'react-icons/fi'
 
 // Keyboard mapping for pads (QWERTY layout)
 const keyMap = {
@@ -17,13 +18,29 @@ const padLabels = [
 ]
 
 export function TapPad(props) {
-    const { sounds = [], onAddSound, isPlaying, decodeFileToBuffer } = props
-    const [padAssignments, setPadAssignments] = useState(new Map()) // padIndex -> soundId
+    const {
+        sounds = [],
+        onAddSound,
+        isPlaying,
+        decodeFileToBuffer,
+        loadouts = [],
+        currentLoadoutId,
+        onCreateLoadout,
+        onDeleteLoadout,
+        onUpdateLoadout,
+        onSwitchLoadout
+    } = props
     const [isRecording, setIsRecording] = useState(false)
     const [tapSequence, setTapSequence] = useState([])
     const [recordingStartTime, setRecordingStartTime] = useState(null)
+    const [showLoadoutMenu, setShowLoadoutMenu] = useState(false)
+    const [newLoadoutName, setNewLoadoutName] = useState('')
     const audioCtxRef = useRef(null)
     const destinationRef = useRef(null)
+
+    // Get current loadout
+    const currentLoadout = loadouts.find(l => l.id === currentLoadoutId) || loadouts[0]
+    const padAssignments = currentLoadout?.assignments || new Map()
 
     // Initialize audio context and destination
     const ensureAudioContext = () => {
@@ -143,6 +160,17 @@ export function TapPad(props) {
         }
     }
 
+    // Close loadout menu when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (showLoadoutMenu && !event.target.closest('.loadout-menu')) {
+                setShowLoadoutMenu(false)
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside)
+        return () => document.removeEventListener('mousedown', handleClickOutside)
+    }, [showLoadoutMenu])
+
     // Handle keyboard input for pads
     useEffect(() => {
         const handleKeyPress = (e) => {
@@ -155,7 +183,16 @@ export function TapPad(props) {
 
         window.addEventListener('keydown', handleKeyPress)
         return () => window.removeEventListener('keydown', handleKeyPress)
-    }, [padAssignments, sounds, isRecording])
+    }, [padAssignments, sounds, isRecording, currentLoadoutId])
+
+    // Handle pad drag start
+    const handlePadDragStart = (e, padIndex) => {
+        const soundId = padAssignments.get(padIndex)
+        if (soundId) {
+            e.dataTransfer.setData('application/x-daw-pad', padIndex.toString())
+            e.dataTransfer.effectAllowed = 'move'
+        }
+    }
 
     // Handle drag and drop for assigning sounds to pads
     const handleDragOver = (e) => {
@@ -165,9 +202,37 @@ export function TapPad(props) {
 
     const handleDrop = (e, padIndex) => {
         e.preventDefault()
+        
+        // Check if dragging from another pad
+        const sourcePadIndex = e.dataTransfer.getData('application/x-daw-pad')
+        if (sourcePadIndex !== '') {
+            const sourceIndex = parseInt(sourcePadIndex)
+            if (sourceIndex !== padIndex) {
+                // Swap pad assignments
+                const newMap = new Map(padAssignments)
+                const sourceSound = newMap.get(sourceIndex)
+                const targetSound = newMap.get(padIndex)
+                
+                if (targetSound) {
+                    newMap.set(sourceIndex, targetSound)
+                } else {
+                    newMap.delete(sourceIndex)
+                }
+                
+                if (sourceSound) {
+                    newMap.set(padIndex, sourceSound)
+                }
+                
+                onUpdateLoadout(currentLoadoutId, newMap)
+            }
+            return
+        }
+        
+        // Check if dragging from sound library
         const soundId = e.dataTransfer.getData('application/x-daw-sound')
         if (soundId) {
-            setPadAssignments(prev => new Map(prev.set(padIndex, soundId)))
+            const newMap = new Map(padAssignments.set(padIndex, soundId))
+            onUpdateLoadout(currentLoadoutId, newMap)
         }
     }
 
@@ -178,21 +243,93 @@ export function TapPad(props) {
     // Clear pad assignment
     const clearPad = (padIndex, e) => {
         e.stopPropagation()
-        setPadAssignments(prev => {
-            const newMap = new Map(prev)
-            newMap.delete(padIndex)
-            return newMap
-        })
+        const newMap = new Map(padAssignments)
+        newMap.delete(padIndex)
+        onUpdateLoadout(currentLoadoutId, newMap)
     }
 
     // Get pad label (keyboard key)
     const getPadLabel = (padIndex) => padLabels[padIndex] || ''
 
     return (
-        <section className="flex flex-col gap-3 backdrop-brightness-105 text-[var(--color-primary)] shadow-xl rounded-lg p-4 pattern">
-            <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold">Tap Pad</h2>
-                <div className="flex items-center gap-2">
+        <section className="flex flex-col gap-3 backdrop-brightness-105 text-[var(--color-primary)] shadow-xl rounded-lg p-4 pattern min-h-0 overflow-hidden">
+            <div className="bg-green-600/20 border-b border-green-500/30 px-4 py-3 rounded-t-lg -mx-4 -mt-4 mb-1">
+                <div className="flex items-center justify-between">
+                    <h2 className="text-sm font-semibold flex items-center gap-2 text-green-400">
+                        <FiGrid className="w-4 h-4" />
+                        Tap Pad
+                    </h2>
+                    <div className="flex items-center gap-2">
+                    {/* Loadout selector */}
+                    <select
+                        value={currentLoadoutId}
+                        onChange={(e) => onSwitchLoadout(parseInt(e.target.value))}
+                        className="px-2 py-1 text-xs bg-gray-700 text-gray-300 border border-gray-600 rounded"
+                    >
+                        {loadouts.map(loadout => (
+                            <option key={loadout.id} value={loadout.id}>
+                                {loadout.name}
+                            </option>
+                        ))}
+                    </select>
+
+                    {/* Loadout management buttons */}
+                    <div className="relative">
+                        <button
+                            onClick={() => setShowLoadoutMenu(!showLoadoutMenu)}
+                            className="px-2 py-1 text-xs bg-gray-700 text-gray-300 border border-gray-600 rounded hover:bg-gray-600"
+                            title="Loadout options"
+                        >
+                            ⋮
+                        </button>
+
+                        {showLoadoutMenu && (
+                            <div className="loadout-menu absolute right-0 top-full mt-1 bg-gray-800 border border-gray-600 rounded shadow-lg z-10 min-w-48">
+                                <div className="p-2">
+                                    <input
+                                        type="text"
+                                        placeholder="New loadout name"
+                                        value={newLoadoutName}
+                                        onChange={(e) => setNewLoadoutName(e.target.value)}
+                                        className="w-full px-2 py-1 text-xs bg-gray-700 text-gray-300 border border-gray-600 rounded mb-2"
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                if (newLoadoutName.trim()) {
+                                                    onCreateLoadout(newLoadoutName.trim())
+                                                    setNewLoadoutName('')
+                                                    setShowLoadoutMenu(false)
+                                                }
+                                            }
+                                        }}
+                                    />
+                                    <button
+                                        onClick={() => {
+                                            if (newLoadoutName.trim()) {
+                                                onCreateLoadout(newLoadoutName.trim())
+                                                setNewLoadoutName('')
+                                                setShowLoadoutMenu(false)
+                                            }
+                                        }}
+                                        className="w-full px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-500 mb-2"
+                                    >
+                                        Create Loadout
+                                    </button>
+                                    {loadouts.length > 1 && (
+                                        <button
+                                            onClick={() => {
+                                                onDeleteLoadout(currentLoadoutId)
+                                                setShowLoadoutMenu(false)
+                                            }}
+                                            className="w-full px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-500"
+                                        >
+                                            Delete Current
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
                     <button
                         onClick={isRecording ? stopRecording : startRecording}
                         className={`px-3 py-1 text-xs rounded border transition-colors ${
@@ -206,6 +343,7 @@ export function TapPad(props) {
                     </button>
                 </div>
             </div>
+            </div>
 
             <div className="grid grid-cols-4 gap-2">
                 {Array.from({ length: 16 }, (_, padIndex) => {
@@ -215,6 +353,8 @@ export function TapPad(props) {
                     return (
                         <div
                             key={padIndex}
+                            draggable={!!sound}
+                            onDragStart={(e) => handlePadDragStart(e, padIndex)}
                             className={`relative aspect-square border-2 rounded-lg cursor-pointer transition-all duration-150 flex flex-col items-center justify-center text-xs font-medium ${
                                 sound
                                     ? 'bg-blue-600/80 border-blue-500 hover:bg-blue-500 active:bg-blue-700'
@@ -259,7 +399,7 @@ export function TapPad(props) {
             </div>
 
             <div className="text-xs text-gray-400 text-center">
-                Drag sounds here to assign them to pads
+                Drag sounds to assign • Drag pads to reorder
             </div>
         </section>
     )
